@@ -1,0 +1,177 @@
+# Ground truth for InsecureShop v1.0 (APK sha256 a83298ae4a37...).
+#
+# Source: the 19 vulnerabilities in https://github.com/hax0rgb/InsecureShop#vulnerabilities
+# The README gives no locations, so `categories` and `locations` were ANNOTATED BY US
+# by reading the decompiled code (jadx 1.5.6), NOT from any model's output.
+# Line numbers refer to work/<app>/decompiled/ (same numbering the models see).
+#
+# Matching (see Matcher.java): a finding matches an entry when
+#   finding.category is in `categories`  AND  finding.file is one of `locations`
+#   AND (if the location has `lines`) the finding's lines overlap them, +/- evidence_line_tolerance.
+# Several categories are allowed where a bug is legitimately described more than one way.
+#
+# `extras` are real issues that are NOT in the README list. They are never counted in recall;
+# they only move a finding from "unmatched" to "accepted extra" for the lenient precision number.
+
+app: InsecureShop
+source: https://github.com/hax0rgb/InsecureShop#vulnerabilities
+
+vulnerabilities:
+  - id: GT01
+    title: Hardcoded Credentials
+    readme: Credentials are hardcoded somewhere that can be used to login to the application.
+    categories: [hardcoded_secret]
+    locations:
+      - {file: sources/com/insecureshop/util/Util.java, lines: [24, 27]}
+
+  - id: GT02
+    title: Insufficient URL Validation
+    readme: Possible to load any arbitrary URL in webview via Deeplink.
+    # The "/web" deep-link branch passes the url parameter to loadUrl with no check.
+    categories: [webview_url_loading, exported_component_input]
+    locations:
+      - {file: sources/com/insecureshop/WebViewActivity.java, lines: [98, 107]}
+
+  - id: GT03
+    title: Weak Host Validation Check
+    readme: Possible to bypass host validation check to load any arbitrary URL in webview.
+    # endsWith("insecureshopapp.com") is bypassable (e.g. attackerinsecureshopapp.com).
+    categories: [webview_url_loading, exported_component_input]
+    locations:
+      - {file: sources/com/insecureshop/WebViewActivity.java, lines: [86, 96]}
+
+  - id: GT04
+    title: Arbitrary Code Execution
+    readme: Arbitrary Code Execution via third-party package contexts.
+    categories: [arbitrary_code_loading]
+    locations:
+      - {file: sources/com/insecureshop/LoginActivity.java, lines: [105, 113]}
+
+  - id: GT05
+    title: Access to Protected Components
+    readme: The app takes an embedded Intent and passes it to startActivity, so any app can launch any protected component.
+    categories: [intent_redirection, exported_component_input]
+    locations:
+      - {file: sources/com/insecureshop/WebView2Activity.java, lines: [53, 56]}
+
+  - id: GT06
+    title: Unprotected Data URIs
+    readme: Untrusted URIs passed to loadUrl allow attackers to load arbitrary URLs in webview.
+    categories: [webview_url_loading, exported_component_input]
+    locations:
+      - {file: sources/com/insecureshop/WebView2Activity.java, lines: [79, 108]}
+
+  - id: GT07
+    title: Theft of Arbitrary Files
+    readme: Possible to steal files from the app's local storage via ChooserActivity.
+    # Exported ChooserActivity copies any file:// path it is sent to public external storage.
+    categories: [exported_component_input, insecure_data_storage, content_provider_exposure, other]
+    locations:
+      - {file: sources/com/insecureshop/ChooserActivity.java, lines: [50, 95]}
+
+  - id: GT08
+    title: Using Components with Known Vulnerabilities
+    readme: Vulnerable components/libraries that allow exfiltrating local files to a remote domain.
+    # Our reading: the exported net.gotev UploadService (upload library) can be driven by any app
+    # to upload local files to an attacker's server. Least certain annotation in this file.
+    categories: [exported_component_input, weak_permission, other]
+    locations:
+      - {file: resources/AndroidManifest.xml, lines: [99, 103]}
+
+  - id: GT09
+    title: Insecure Broadcast Receiver
+    readme: An exported activity registers a broadcast receiver in onCreate; an attacker can trigger it with an arbitrary 'web_url'.
+    categories: [insecure_broadcast_receiver, exported_component_input, intent_redirection, webview_url_loading]
+    locations:
+      - {file: sources/com/insecureshop/AboutUsActivity.java, lines: [60, 64]}
+      - {file: sources/com/insecureshop/CustomReceiver.java, lines: [14, 24]}
+
+  - id: GT10
+    title: AWS Cognito Misconfiguration
+    readme: The misconfigured AWS Cognito instance can be used to access an AWS S3 bucket.
+    categories: [cloud_misconfig, hardcoded_secret]
+    locations:
+      - {file: resources/res/values/strings.xml, lines: [33, 33]}
+
+  - id: GT11
+    title: Insecure Use of FilePaths in FileProvider
+    readme: A wide file-sharing declaration allows access to the root directory via the content provider.
+    categories: [fileprovider_misconfig, content_provider_exposure]
+    locations:
+      - {file: resources/res/xml/provider_paths.xml}
+      - {file: resources/AndroidManifest.xml, lines: [90, 98]}
+
+  - id: GT12
+    title: Implicit Intent Broadcast with Sensitive Data
+    readme: An implicit intent broadcast lets third-party apps steal credentials.
+    categories: [implicit_intent_leak, insecure_broadcast_receiver]
+    locations:
+      - {file: sources/com/insecureshop/AboutUsActivity.java, lines: [80, 89]}
+
+  - id: GT13
+    title: Intercepting Implicit Intent to Load Arbitrary URL
+    readme: Implicit intents let third-party apps load any arbitrary URL in the webview.
+    # Implicit intents for the WEBVIEW / PRODUCT_DETAIL actions can be intercepted or spoofed.
+    categories: [implicit_intent_leak, intent_redirection, webview_url_loading, insecure_broadcast_receiver]
+    locations:
+      - {file: sources/com/insecureshop/broadcast/ProductDetailBroadCast.java, lines: [12, 18]}
+      - {file: sources/com/insecureshop/SendingDataViaActionActivity.java, lines: [50, 57]}
+      - {file: sources/com/insecureshop/ProductAdapter.java, lines: [118, 125]}
+
+  - id: GT14
+    title: Insecure Implementation of SetResult in Exported Activity
+    readme: ResultActivity's setResult can be abused to access arbitrary content providers.
+    categories: [insecure_result_handling, intent_redirection, exported_component_input]
+    locations:
+      - {file: sources/com/insecureshop/ResultActivity.java, lines: [34, 39]}
+
+  - id: GT15
+    title: Insecure Content Provider
+    readme: The content provider can be accessed by any third-party app to steal user credentials.
+    # Exported provider guarded by a custom permission with default (normal) protectionLevel.
+    # NOTE: InsecureshopFileProvider.java has the same query() but is NOT registered in the
+    # manifest (dead code), so it is deliberately not a location.
+    categories: [content_provider_exposure, weak_permission]
+    locations:
+      - {file: sources/com/insecureshop/contentProvider/InsecureShopProvider.java, lines: [55, 75]}
+      - {file: resources/AndroidManifest.xml, lines: [17, 17]}
+      - {file: resources/AndroidManifest.xml, lines: [85, 89]}
+
+  - id: GT16
+    title: Lack of SSL Certificate Validation
+    readme: The unsafe onReceivedSslError implementation allows eavesdropping on webview traffic.
+    categories: [tls_validation_bypass]
+    locations:
+      - {file: sources/com/insecureshop/util/CustomWebViewClient.java, lines: [14, 17]}
+
+  - id: GT17
+    title: Insecure Webview Properties Enabled
+    readme: Insecure WebView properties allow third-party apps to exfiltrate local data to a remote domain.
+    categories: [webview_insecure_settings]
+    locations:
+      - {file: sources/com/insecureshop/WebViewActivity.java, lines: [59, 68]}
+      - {file: sources/com/insecureshop/WebView2Activity.java, lines: [64, 73]}
+      - {file: sources/com/insecureshop/PrivateActivity.java, lines: [55, 67]}
+
+  - id: GT18
+    title: Insecure Data Storage
+    readme: The app stores user credentials locally without encrypting them.
+    categories: [insecure_data_storage]
+    locations:
+      - {file: sources/com/insecureshop/util/Prefs.java, lines: [80, 101]}
+      - {file: sources/com/insecureshop/LoginActivity.java, lines: [90, 98]}
+
+  - id: GT19
+    title: Insecure Logging
+    readme: User credentials are leaked in logcat.
+    categories: [insecure_logging]
+    locations:
+      - {file: sources/com/insecureshop/LoginActivity.java, lines: [87, 88]}
+
+# Real issues NOT in the README's 19. Added by us; never counted in recall.
+extras:
+  - id: X01
+    title: Debuggable / backup / cleartext manifest flags
+    categories: [manifest_misconfig]
+    locations:
+      - {file: resources/AndroidManifest.xml, lines: [24, 27]}

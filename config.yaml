@@ -1,0 +1,175 @@
+# Everything app- or model-specific lives here. Nothing is hard-coded in the code.
+# To scan a new app: change app.apk_path (and drop/replace ground_truth).
+# To add a model: add an entry under `models` and point a role at it.
+
+app:
+  apk_path: ../apks/InsecureShop.apk
+  work_dir: ./work                                  # decompiled output + results go here
+  ground_truth: ./ground_truth/insecureshop.yaml    # optional; omit for an unseen app
+
+# Named model entries. `provider` picks the client class; the rest is passed to it.
+# API keys are never stored here, only the NAME of the env var that holds them.
+models:
+  claude-sonnet:
+    provider: anthropic
+    model: claude-sonnet-5-5
+    api_key_env: ANTHROPIC_API_KEY
+    max_tokens: 16000
+    refusal_fallback: true      # security prompts can trip safety classifiers; let the API retry on a fallback model
+
+  gemini-flash:
+    provider: openai_compatible
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+    model: gemini-3.6-flash
+    api_key_env: GEMINI_API_KEY
+    max_tokens: 16000
+    temperature: 0
+    timeout_seconds: 300
+    json_mode: true
+    requests_per_minute: 5      # Gemini free tier: 5 requests/min
+    max_chunk_tokens: 60000     # 1M-token context: read the whole app in one call (also sees cross-file flows)
+
+  # Same Gemini model, but reading the app in ~9K-token pieces (more focused passes).
+  gemini-flash-chunked:
+    provider: openai_compatible
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+    model: gemini-3.6-flash
+    api_key_env: GEMINI_API_KEY
+    max_tokens: 16000
+    temperature: 0
+    timeout_seconds: 300
+    json_mode: true
+    requests_per_minute: 5
+    max_chunk_tokens: 9000
+
+  # Teacher candidates: can we get a teacher that's stronger than the students?
+  # (gemini-3.1-pro is limit 0 on the free tier; gemini-3.7/3.8-flash timed out on 2026-11-09)
+  gemini-flash-high:
+    provider: openai_compatible
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+    model: gemini-3.6-flash
+    api_key_env: GEMINI_API_KEY
+    max_tokens: 32000            # thinking tokens count toward the output budget
+    timeout_seconds: 300
+    json_mode: true
+    reasoning_effort: high
+    requests_per_minute: 5
+    max_chunk_tokens: 9000
+
+  groq-gpt-oss-120b:             # open model, 6x the student's size: a big-teaches-small setup in one family
+    provider: openai_compatible
+    base_url: https://api.groq.com/openai/v1
+    model: openai/gpt-oss-120b
+    api_key_env: GROQ_API_KEY
+    max_tokens: 2500
+    temperature: 0
+    reasoning_effort: medium
+    json_mode: true
+    tokens_per_minute: 8000
+    requests_per_minute: 30
+
+  # Open-weight students on Groq (list: GET https://api.groq.com/openai/v1/models)
+  groq-gpt-oss-20b:
+    provider: openai_compatible
+    base_url: https://api.groq.com/openai/v1
+    model: openai/gpt-oss-20b
+    api_key_env: GROQ_API_KEY
+    max_tokens: 2500             # avg reply ~600 tokens; input + this must stay under Groq's 8K/min
+    temperature: 0
+    reasoning_effort: low       # gpt-oss is a reasoning model; low keeps output tokens (and the daily budget) down
+    json_mode: true
+    tokens_per_minute: 8000     # Groq free tier: 8K tokens/min, ~200K tokens/day per model
+    requests_per_minute: 30
+
+  # Weaker open student: Gemma 4 MoE, 26B total but only ~4B active per token. Hosted free in Google AI Studio.
+  gemma-4-26b:
+    provider: openai_compatible
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+    model: gemma-4-26b-a4b-it
+    api_key_env: GEMINI_API_KEY
+    max_tokens: 12000             # its <thought> reasoning counts toward this; 4000 truncated replies
+    temperature: 0
+    json_mode: true
+    requests_per_minute: 10       # quota is per model, separate from Gemini Flash
+    tokens_per_minute: 15000      # 429s at ~5K-token requests x 10/min: the per-minute token quota is lower
+    timeout_seconds: 180
+
+  groq-qwen-27b:
+    provider: openai_compatible
+    base_url: https://api.groq.com/openai/v1
+    model: qwen/qwen3.8-27b
+    api_key_env: GROQ_API_KEY
+    max_tokens: 2500             # avg reply ~600 tokens; input + this must stay under Groq's 8K/min
+    temperature: 0
+    json_mode: true
+    tokens_per_minute: 8000
+    requests_per_minute: 30
+
+# Which named model plays which role.
+roles:
+  teacher: gemini-flash-chunked   # one big call found 12/19, four 9K chunks found 15/19
+  student: groq-gpt-oss-20b
+
+run:
+  repeats: 3          # scans per condition, to measure variance honestly
+  max_parallel: 4     # concurrent LLM calls
+
+# How the APK is turned into model input. All rules are generic: nothing app-specific.
+ingest:
+  jadx_path: jadx
+  # App code = manifest `package` + packages of declared components from the same org
+  # (first two name segments). Library components (androidx, other orgs) are dropped.
+  # If that finds fewer than this many files (e.g. obfuscated app), fall back to
+  # "all code not under library_prefixes".
+  min_app_files: 3
+  library_prefixes: [android., androidx., kotlin., kotlinx., java., javax., com.google., com.android., okhttp3., okio., retrofit2., com.squareup., io.reactivex., org.jetbrains., org.intellij., com.facebook., dagger.]
+  # Generated code that carries no logic (regex on the path).
+  exclude_patterns:
+    - '(^|/)R(\$[^/]*)?\.java$'
+    - '(^|/)BR\.java$'
+    - '(^|/)BuildConfig\.java$'
+    - '/databinding/'
+    - 'DataBinderMapperImpl\.java$'
+    - 'DataBindingInfo\.java$'
+  # Lines whose content is replaced by a short placeholder (line numbers stay intact).
+  # Kotlin's @Metadata is a huge encoded blob in every class: ~19% of tokens, zero signal.
+  trim_line_patterns:
+    - '^\s*@Metadata\('
+  # Resource files worth scanning: secrets in strings, FileProvider paths, network security config.
+  resource_patterns:
+    - '^resources/res/values/strings\.xml$'
+    - '^resources/res/xml/[^/]+\.xml$'
+  # Default chunk size; a model can override it with its own max_chunk_tokens.
+  # Student-before vs student-after always use the SAME chunks, so the lift comparison is fair.
+  # 3000 fits Groq's free tier (8K tokens/min incl. prompt + output).
+  max_chunk_tokens: 3000
+
+lessons:
+  # Lessons go into every student prompt, so they cost tokens on every chunk (and Groq's 8K/min budget).
+  max_lessons: 12
+
+scan:
+  prompts_dir: ./prompts
+  evidence_line_tolerance: 5   # cited line may be off by this much and still count as "verified"
+  min_evidence_chars: 12       # a quote shorter than this ("}" , "return") proves nothing
+  # Generic Android vulnerability taxonomy. Models must pick one; the matcher uses it.
+  categories:
+    hardcoded_secret: credentials, API keys, tokens or cloud identifiers embedded in code or resources
+    insecure_logging: sensitive data written to logs
+    insecure_data_storage: sensitive data stored unencrypted (SharedPreferences, files, external storage, DB)
+    webview_url_loading: WebView loads a URL from untrusted input without proper validation (incl. weak host checks)
+    webview_insecure_settings: dangerous WebView settings (JavaScript, file/universal file access, JS interfaces)
+    tls_validation_bypass: SSL/TLS certificate or hostname validation disabled or errors ignored
+    exported_component_input: exported component acts on untrusted intent data without validation
+    intent_redirection: app forwards an attacker-supplied intent, reaching protected components
+    implicit_intent_leak: sensitive data sent via implicit intent or broadcast that any app can receive
+    insecure_broadcast_receiver: receiver registered/exported without protection and acts on its input
+    content_provider_exposure: content provider exposes data or files to other apps (incl. SQLi, path traversal)
+    fileprovider_misconfig: FileProvider paths share too much (e.g. root-path) or grants are misused
+    weak_permission: custom permission with weak protectionLevel or missing permission checks
+    arbitrary_code_loading: code loaded from untrusted sources (other packages, external files, DexClassLoader)
+    insecure_result_handling: exported activity returns data to an untrusted caller via setResult
+    manifest_misconfig: risky manifest flags (debuggable, allowBackup, cleartext traffic)
+    cloud_misconfig: insecure cloud/backend configuration usable by an attacker
+    weak_crypto: broken or misused cryptography
+    other: anything that fits none of the above

@@ -1,0 +1,5 @@
+target/
+.env
+work/
+.idea/
+*.iml
